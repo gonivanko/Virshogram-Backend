@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  db:
+    image: mariadb:12.2
+    container_name: virshogram_db
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password_1234
+      MYSQL_DATABASE: virshogram
+      MYSQL_USER: gonivanko
+      MYSQL_PASSWORD: mariadb_ivan_23
+    ports:
+      - "3306:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+
+volumes:
+  mariadb_data:
