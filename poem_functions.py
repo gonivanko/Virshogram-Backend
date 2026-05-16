@@ -1,6 +1,7 @@
-import re
 import random
-from typing import List, Dict, Any, Optional
+import re
+from typing import List, Dict, Any
+
 
 def get_poem_parts(text: str, current_level: int = 0, min_lines: int = 3, max_lines: int = 6) -> list[str]:
     dividers: list[str] = ["\n\n", ".\n", "…\n", "!\n", "?\n", ",\n", "\n"]
@@ -24,7 +25,6 @@ def get_poem_parts(text: str, current_level: int = 0, min_lines: int = 3, max_li
         else:
             parts.extend(get_poem_parts(current_part, current_level + 1, min_lines, max_lines))
 
-
     buffer = buffer.split(divider)[0]
 
     if buffer.strip():
@@ -34,6 +34,7 @@ def get_poem_parts(text: str, current_level: int = 0, min_lines: int = 3, max_li
             parts.append(buffer)
 
     return parts
+
 
 def parse_poem_text(poem_text: str) -> List[Dict[str, Any]]:
     """
@@ -75,6 +76,7 @@ def parse_poem_text(poem_text: str) -> List[Dict[str, Any]]:
 
     return parsed_lines
 
+
 def prepare_poem_lines(content: str) -> List[Dict[str, Any]]:
     """
     Готує рядки вірша, обираючи в кожному одне випадкове слово для приховування.
@@ -100,6 +102,7 @@ def prepare_poem_lines(content: str) -> List[Dict[str, Any]]:
             line["correctWord"] = line["tokens"][random_index]["text"]
 
     return lines
+
 
 def extract_hidden_words(lines: List[Dict[str, Any]]) -> List[str]:
     """

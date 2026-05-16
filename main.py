@@ -1,23 +1,22 @@
 import hashlib
 import io
 import os
+import random
 from typing import List
 
-import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.responses import StreamingResponse, FileResponse
-from sqlalchemy.orm import Session
 from fastapi.staticfiles import StaticFiles
 from google.cloud import texttospeech
-from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 import schemas
-from poem_functions import get_poem_parts, prepare_poem_lines, extract_hidden_words
-from utils import get_random_exercise_type
-
+from auth import get_current_user
 from db import models
 from db.database import engine, get_db
+from poem_functions import get_poem_parts, prepare_poem_lines, extract_hidden_words
+from utils import get_random_exercise_type
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -32,38 +31,7 @@ os.makedirs("uploads/images", exist_ok=True)
 
 app.mount("/images", StaticFiles(directory="uploads/images"), name="images")
 
-# POEMS_SERVICE_URL = "http://192.168.0.106:3000/poems"
-
-
 prompt: str = "Read aloud in a warm, welcoming tone."
-
-
-# 1. Модель для однієї відповіді (одного рядка)
-class LineResult(BaseModel):
-    hidden_token_index: int
-    correct_word: str
-    user_answer: str
-    is_correct: bool
-
-
-class TestResult(BaseModel):
-    correct_count: int
-    total_count: int
-
-
-# # 2. Головна модель для всього тесту
-# class TestSubmission(BaseModel):
-#     poem_id: int
-#     user_id: int  # Тимчасово передаємо так, пізніше візьмеш із токена авторизації
-#     results: List[LineResult]
-#     time_spent_seconds: int
-
-# 2. Головна модель для всього тесту
-class TestSubmission(BaseModel):
-    poem_id: str
-    user_id: str
-    time_spent_seconds: int
-    results: TestResult
 
 
 @app.get("/generate-audio")
@@ -114,33 +82,6 @@ async def generate_audio(text: str = Query(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/test")
-async def test(poem_id: str = Query(...), db: Session = Depends(get_db)):
-    poem = db.query(models.Poem).filter(models.Poem.id == poem_id).first()
-    if not poem:
-        raise HTTPException(status_code=404, detail="Poem not found")
-
-    text_parts = get_poem_parts(poem.text)
-    #
-    steps = []
-    for i, part in enumerate(text_parts):
-        lines = prepare_poem_lines(part)
-        steps.append({"step": i, "exercise_type": get_random_exercise_type(), "text": part, "lines": lines,
-                      "hidden_words": extract_hidden_words(lines)})
-
-    print(steps)
-
-    #
-    # Повертаємо ці дані як відповідь нашого API
-    return {
-        "id": 1,
-        "user_id": 1,
-        "poem_id": poem_id,
-        "steps_count": len(text_parts),
-        "steps": steps,
-    }
-
-
 # 1. Отримання списку всіх віршів (з пагінацією)
 @app.get("/poems", response_model=List[schemas.PoemWithAuthorResponse])
 def get_poems(skip: int = 0, limit: int = 20, db: Session = Depends(get_db)):
@@ -149,6 +90,30 @@ def get_poems(skip: int = 0, limit: int = 20, db: Session = Depends(get_db)):
     skip та limit використовуються для пагінації (щоб не вантажити всі 1000 віршів одразу).
     """
     poems = db.query(models.Poem).offset(skip).limit(limit).all()
+    return poems
+
+
+@app.get("/poems/studied", response_model=List[schemas.PoemWithAuthorResponse])
+def get_studied_poems(
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(get_current_user)  # Дістаємо поточного юзера
+):
+    """
+    Повертає список унікальних віршів, для яких користувач має хоча б один результат тесту.
+    Аналог: SELECT * FROM poems WHERE id IN (SELECT DISTINCT poem_id FROM test_results WHERE user_id = X);
+    """
+
+    # 1. Створюємо підзапит (Subquery) для отримання унікальних id віршів
+    studied_poem_ids = (
+        db.query(models.TestResult.poem_id)
+        .filter(models.TestResult.user_id == current_user.id)
+        .distinct()
+        .subquery()
+    )
+
+    # 2. Робимо основний запит до таблиці poems, фільтруючи за підзапитом
+    poems = db.query(models.Poem).filter(models.Poem.id.in_(studied_poem_ids)).all()
+
     return poems
 
 
@@ -188,60 +153,74 @@ def search_poems(
 
 
 @app.post("/tests/start")
-def start_test(user_id: int, poem_id: int, db: Session = Depends(get_db)):
+def start_test(poem_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     # Створюємо запис. start_time проставиться автоматично!
-    new_test = TestResult(
-        user_id=user_id,
+
+    print(f"Користувач з БД ID: {current_user.id}, Clerk ID: {current_user.clerk_id}")
+
+    poem = db.query(models.Poem).filter(models.Poem.id == poem_id).first()
+    if not poem:
+        raise HTTPException(status_code=404, detail="Poem not found")
+
+    text_parts = get_poem_parts(poem.text)
+    #
+    steps = []
+    total_questions = 0
+    for i, part in enumerate(text_parts):
+        lines = prepare_poem_lines(part)
+        hidden_words = extract_hidden_words(lines)
+        random.shuffle(hidden_words)
+        total_questions += len(hidden_words)
+        steps.append({"step": i, "exercise_type": get_random_exercise_type(), "text": part, "lines": lines,
+                      "hidden_words": hidden_words})
+
+    new_test = models.TestResult(
+        user_id=current_user.id,
         poem_id=poem_id,
-        steps_count=0,
+        steps_count=len(text_parts),
         correct_count=0,
-        total_count=10
+        total_count=total_questions
     )
     db.add(new_test)
     db.commit()
     db.refresh(new_test)
-    return {"test_id": new_test.id}
+
+    return {
+        "id": new_test.id,
+        "user_id": new_test.user_id,
+        "poem_id": new_test.poem_id,
+        "steps_count": new_test.steps_count,
+        "steps": steps,
+    }
 
 
-@app.post("/submit-test")
-async def submit_test(submission: TestSubmission):
-    try:
-        # Рахуємо кількість правильних відповідей
-        # correct_answers = sum(1 for item in submission.results if item.is_correct)
-        # total_questions = len(submission.results)
-        score = submission.results.correct_count / submission.results.total_count if submission.results.total_count > 0 else 0
+@app.post("/tests/{test_id}/finish")
+def finish_test(test_id: int, correct_answers: int, db: Session = Depends(get_db)):
+    # 1. Знаходимо тест
+    test_result = db.query(models.TestResult).filter(models.TestResult.id == test_id).first()
 
-        # print(f"--- Score: {score}")
+    if not test_result:
+        raise HTTPException(status_code=404, detail="Test not found")
 
-        # TODO: Тут ти будеш зберігати дані в MariaDB
-        # db.add(TestResult(user_id=..., poem_id=..., score=score))
-        # db.commit()
+    if test_result.finished == 1 or test_result.finished == True:
+        raise HTTPException(status_code=400, detail=f"Test #{test_id} already finished")
 
-        # Повертаємо фронтенду результати (наприклад, XP або нові досягнення)
-        return {
-            "status": "success",
-            "score": score,
-            "xp_earned": int(score * 100),
-            "message": f"Тест завершено! {submission.results.correct_count} з {submission.results.total_count} правильно."
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # 2. Оновлюємо результати
+    test_result.correct_count = correct_answers
 
+    # 3. Викликаємо наш "розумний" метод!
+    test_result.finish_test()
 
-@app.get("/users/{clerk_id}")
-def get_user(clerk_id: str, db: Session = Depends(get_db)):
-    # Звертаємось до бази через ORM
-    user = db.query(models.User).filter(models.User.clerk_id == clerk_id).first()
+    # 4. Зберігаємо
+    db.commit()
+    db.refresh(test_result)
 
-    if not user:
-        # Якщо юзера немає, створюємо його (Lazy Sync)
-        new_user = models.User(clerk_id=clerk_id, xp=0)
-        db.add(new_user)
-        db.commit()
-        db.refresh(new_user)
-        return new_user
-
-    return user
+    return {
+        "message": "Test finished",
+        "time_spent": test_result.time_spent_seconds,  # Тут вже буде готова цифра!
+        "score": test_result.correct_count,
+        "total_questions": test_result.total_count,
+    }
 
 
 if __name__ == "__main__":

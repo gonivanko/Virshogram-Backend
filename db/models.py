@@ -1,8 +1,13 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Boolean, func
+from datetime import datetime, timezone
+
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Boolean
 from sqlalchemy.orm import relationship
 
 from db.database import Base
-from datetime import datetime, timezone
+
+
+def utc_now():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class User(Base):
@@ -31,11 +36,12 @@ class Poem(Base):
     text = Column(Text, nullable=False)
 
     author = relationship("Author", back_populates="poems")
+    test_results = relationship("TestResult", back_populates="poem")
 
 
 class Achievement(Base):
     __tablename__ = "achievements"
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=False)
     xp_reward = Column(Integer, nullable=False)
@@ -44,13 +50,14 @@ class Achievement(Base):
 
 class UserAchievement(Base):
     __tablename__ = "user_achievements"
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     achievement_id = Column(Integer, ForeignKey('achievements.id'), nullable=False)
     date_achieved = Column(
-        DateTime(timezone=True),
+        DateTime(timezone=False),
         nullable=False,
-        server_default=func.now())
+        default=utc_now
+    )
 
 
 class TestResult(Base):
@@ -64,20 +71,27 @@ class TestResult(Base):
     total_count = Column(Integer, nullable=False)
     finished = Column(Boolean, default=False, nullable=False)
 
-    # Використовуємо Python-функцію для дефолтного часу створення
-    start_time = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
-    end_time = Column(DateTime(timezone=True), nullable=True)
+    # Store UTC timestamps as timezone-naive values because MySQL/MariaDB
+    # does not reliably preserve timezone information for DATETIME columns.
+    start_time = Column(DateTime(timezone=False), default=utc_now, nullable=False)
+    end_time = Column(DateTime(timezone=False), nullable=True)
     time_spent_seconds = Column(Integer, nullable=True)
+
+    poem = relationship("Poem", back_populates="test_results")
 
     def finish_test(self):
         """
         Метод, який викликається при завершенні тесту.
         Він автоматично ставить час завершення і рахує витрачені секунди.
         """
-        # Фіксуємо час завершення
-        self.end_time = datetime.now(timezone.utc)
+        self.end_time = utc_now()
+        self.finished = True
 
-        # Рахуємо різницю
         if self.start_time:
-            delta = self.end_time - self.start_time
-            self.time_spent_seconds = int(delta.total_seconds())
+            start_time = self.start_time
+
+            if start_time.tzinfo is not None:
+                start_time = start_time.astimezone(timezone.utc).replace(tzinfo=None)
+
+            delta = self.end_time - start_time
+            self.time_spent_seconds = max(0, int(delta.total_seconds()))

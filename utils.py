@@ -1,5 +1,6 @@
 import random
 
+
 def get_random_exercise_type():
     exercise_types = [
         'choose-words',

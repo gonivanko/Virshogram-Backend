@@ -1,6 +1,7 @@
 import json
-from database import SessionLocal, engine
+
 import models
+from database import SessionLocal, engine
 
 
 def seed_database():
@@ -56,6 +57,16 @@ def seed_database():
                 )
                 db.add(poem)
                 print(f"Додано вірш: {poem.title}")
+
+        existing_user = db.query(models.User).filter_by(id=1).first()
+
+        if not existing_user:
+            user = models.User(
+                clerk_id="gonivanko",
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
 
         db.commit()
         print("Базу даних успішно заповнено!")

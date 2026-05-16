@@ -14,6 +14,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 # Базовий клас, від якого ми будемо створювати наші таблиці (моделі)
 Base = declarative_base()
 
+
 # Функція (Dependency), яка буде видавати підключення кожному ендпоінту
 def get_db():
     db = SessionLocal()

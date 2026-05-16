@@ -1,5 +1,4 @@
 from pydantic import BaseModel
-from typing import Optional
 
 
 # Базова схема для вірша
@@ -34,7 +33,6 @@ class PoemWithAuthorResponse(PoemBase):
 
     class Config:
         from_attributes = True
-
 
 # class TestStep(BaseModel):
 #     step: int

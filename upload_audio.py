@@ -10,6 +10,7 @@ app = FastAPI()
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+
 @app.post("/api/audio/upload")
 async def upload_audio(audio: UploadFile = File(...)):
     try:
@@ -36,6 +37,7 @@ async def upload_audio(audio: UploadFile = File(...)):
     except Exception as e:
         print(f"Помилка збереження: {e}")
         raise HTTPException(status_code=500, detail=f"Помилка сервера: {str(e)}")
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
