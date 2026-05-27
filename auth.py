@@ -31,6 +31,7 @@ def get_current_user(
     Реалізує патерн Lazy Sync (створює юзера, якщо його ще немає в базі).
     """
     token = credentials.credentials
+    print(f"DEBUG: Отримано токен: {token[:20]}...")
 
     try:
         # Валідуємо токен за допомогою публічного ключа Clerk
@@ -39,6 +40,7 @@ def get_current_user(
             token,
             CLERK_PUBLIC_KEY,
             algorithms=["RS256"],
+            leeway=300,
             options={"verify_aud": False}  # За потреби можна налаштувати валідацію audience
         )
 

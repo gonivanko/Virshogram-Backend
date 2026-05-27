@@ -59,6 +59,8 @@ class UserAchievement(Base):
         default=utc_now
     )
 
+    achievement = relationship("Achievement")
+
 
 class TestResult(Base):
     __tablename__ = "test_results"

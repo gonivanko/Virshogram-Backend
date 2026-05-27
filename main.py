@@ -9,9 +9,10 @@ from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from google.cloud import texttospeech
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 import schemas
+from achievement_manager import check_and_grant_achievements
 from auth import get_current_user
 from db import models
 from db.database import engine, get_db
@@ -195,32 +196,69 @@ def start_test(poem_id: int, db: Session = Depends(get_db), current_user: models
 
 
 @app.post("/tests/{test_id}/finish")
-def finish_test(test_id: int, correct_answers: int, db: Session = Depends(get_db)):
-    # 1. Знаходимо тест
+def finish_test(
+    test_id: int,
+    correct_answers: int,
+    tz: str = "Europe/Kyiv",
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
     test_result = db.query(models.TestResult).filter(models.TestResult.id == test_id).first()
-
     if not test_result:
         raise HTTPException(status_code=404, detail="Test not found")
+
+    # Перевірка безпеки: чи цей тест належить поточному юзеру
+    if test_result.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
 
     if test_result.finished == 1 or test_result.finished == True:
         raise HTTPException(status_code=400, detail=f"Test #{test_id} already finished")
 
-    # 2. Оновлюємо результати
+    # current_user = db.query(models.User).filter(models.User.id == test_result.user_id).first()
+
+    # Фіксуємо результати
     test_result.correct_count = correct_answers
+    test_result.finished = True
+    test_result.finish_test() # Твій автоматичний підрахунок секунд з першого питання!
 
-    # 3. Викликаємо наш "розумний" метод!
-    test_result.finish_test()
-
-    # 4. Зберігаємо
     db.commit()
     db.refresh(test_result)
 
+    # А ТЕПЕР МАГІЯ: Перевіряємо досягнення автоматично
+    new_achievements = check_and_grant_achievements(current_user.id, db, tz)
+
     return {
-        "message": "Test finished",
-        "time_spent": test_result.time_spent_seconds,  # Тут вже буде готова цифра!
+        "message": "Test finished successfully",
+        "time_spent": test_result.time_spent_seconds,
+        # "current_xp": current_user.xp,
         "score": test_result.correct_count,
         "total_questions": test_result.total_count,
+        # Якщо юзер щось відкрив, фронтенд отримає масив об'єктів і зможе показати красиве спокійне модальне вікно
+        "new_achievements": [
+            {"name": a.name, "description": a.description, "image": a.image}
+            for a in new_achievements
+        ]
     }
+
+
+@app.post("/achievements", response_model=List[schemas.UserAchievementResponse])
+def get_my_achievements(
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(get_current_user)  # Автоматично дістаємо поточного юзера з Clerk
+):
+    """
+    Повертає список усіх здобутих досягнень поточного автентифікованого користувача.
+    Аналог: SELECT * FROM user_achievements JOIN achievements ON ... WHERE user_id = X;
+    """
+    achievements = (
+        db.query(models.UserAchievement)
+        .join(models.Achievement, models.UserAchievement.achievement_id == models.Achievement.id)
+        .filter(models.UserAchievement.user_id == current_user.id)  # Використовуємо ID поточного юзера
+        .options(joinedload(models.UserAchievement.achievement))  # Оптимізація: завантажуємо дані одним запитом
+        .all()
+    )
+
+    return achievements
 
 
 if __name__ == "__main__":
